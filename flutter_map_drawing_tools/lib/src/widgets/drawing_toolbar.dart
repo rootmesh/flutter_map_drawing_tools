@@ -27,9 +27,11 @@ class DrawingToolbar extends StatefulWidget {
   const DrawingToolbar({
     super.key,
     required this.onToolSelected,
-    this.activeTool = DrawingTool.none, 
-    this.availableTools = const [ 
+    this.activeTool = DrawingTool.none,
+    this.availableTools = const [
       DrawingTool.polygon,
+      DrawingTool.multiPolyline, 
+      DrawingTool.multiPolygon,  
       DrawingTool.rectangle,
       DrawingTool.pentagon,
       DrawingTool.hexagon,
@@ -38,7 +40,11 @@ class DrawingToolbar extends StatefulWidget {
       DrawingTool.point,
       DrawingTool.edit,
       DrawingTool.delete,
+      // Undo and Redo are not general "available tools" but fixed actions.
+      // They will be added separately if canUndo/canRedo is true.
     ],
+    this.canUndo = false,
+    this.canRedo = false,
   });
 
   /// {@macro drawing_tool_callback}
@@ -48,7 +54,13 @@ class DrawingToolbar extends StatefulWidget {
   /// The currently active drawing tool, as determined by the host application.
   /// This is used to visually highlight the active tool button in the toolbar.
   /// Defaults to [DrawingTool.none].
-  final DrawingTool activeTool; 
+  final DrawingTool activeTool;
+  
+  /// Flag indicating if an undo operation is currently possible.
+  final bool canUndo;
+
+  /// Flag indicating if a redo operation is currently possible.
+  final bool canRedo;
 
   /// A list of [DrawingTool]s that should be available in the toolbar.
   /// This allows customization of which drawing tools are presented to the user.
@@ -67,7 +79,9 @@ class _DrawingToolbarState extends State<DrawingToolbar> with SingleTickerProvid
   
   // Defines the default icons for each drawing tool and action.
   static final Map<DrawingTool, IconData> _defaultToolIcons = {
-    DrawingTool.polygon: Icons.timeline, 
+    DrawingTool.polygon: Icons.timeline,
+    DrawingTool.multiPolyline: Icons.line_axis, 
+    DrawingTool.multiPolygon: Icons.layers_outlined, 
     DrawingTool.rectangle: Icons.crop_square,
     DrawingTool.pentagon: Icons.pentagon_outlined,
     DrawingTool.hexagon: Icons.hexagon_outlined,
@@ -77,9 +91,11 @@ class _DrawingToolbarState extends State<DrawingToolbar> with SingleTickerProvid
     DrawingTool.edit: Icons.edit_outlined,
     DrawingTool.delete: Icons.delete_outlined,
     DrawingTool.cancel: Icons.close,
-    DrawingTool.none: Icons.draw, 
-    DrawingTool.completePart: Icons.add_path_outlined, 
-    DrawingTool.finalizeMultiPart: Icons.done_all, 
+    DrawingTool.none: Icons.draw,
+    DrawingTool.completePart: Icons.add_path_outlined,
+    DrawingTool.finalizeMultiPart: Icons.done_all,
+    DrawingTool.undo: Icons.undo,
+    DrawingTool.redo: Icons.redo,
   };
 
   @override
@@ -154,7 +170,17 @@ class _DrawingToolbarState extends State<DrawingToolbar> with SingleTickerProvid
   // Buttons are shown based on context (e.g., multi-part drawing status).
   List<Widget> _buildToolButtons() {
     List<Widget> buttons = [];
-    final drawingState = Provider.of<DrawingState>(context, listen: true); 
+    final drawingState = Provider.of<DrawingState>(context, listen: true);
+
+    // Add Undo button if available
+    if (widget.canUndo) {
+      buttons.add(_buildActionButton(DrawingTool.undo, _defaultToolIcons[DrawingTool.undo]!, 'Undo', null, _animationController));
+    }
+    // Add Redo button if available
+    if (widget.canRedo) {
+      buttons.add(_buildActionButton(DrawingTool.redo, _defaultToolIcons[DrawingTool.redo]!, 'Redo', null, _animationController));
+    }
+
 
     if (drawingState.isMultiPartDrawingInProgress) {
         final currentPartPoints = drawingState.currentDrawingParts.isNotEmpty ? drawingState.currentDrawingParts.last.length : 0;
@@ -166,88 +192,86 @@ class _DrawingToolbarState extends State<DrawingToolbar> with SingleTickerProvid
         }
 
         if (canCompletePart) {
-          buttons.add(
-            Padding(
-              padding: const EdgeInsets.symmetric(vertical: 4.0),
-              child: ScaleTransition(
-                scale: CurvedAnimation(parent: _animationController, curve: Curves.easeOutCubic), 
-                child: FloatingActionButton.small(
-                  heroTag: 'fab_tool_complete_part',
-                  onPressed: () { if(_isExpanded) _toggleExpand(); widget.onToolSelected(DrawingTool.completePart); },
-                  tooltip: drawingToolDisplayName(DrawingTool.completePart),
-                  child: Icon(_defaultToolIcons[DrawingTool.completePart]),
-                ),
-              ),
-            )
-          );
+          buttons.add(_buildActionButton(
+            DrawingTool.completePart, 
+            _defaultToolIcons[DrawingTool.completePart]!, 
+            drawingToolDisplayName(DrawingTool.completePart), 
+            null,
+            _animationController
+          ));
         }
 
         if (drawingState.currentDrawingParts.any((part) => part.isNotEmpty)) {
-           buttons.add(
-            Padding(
-              padding: const EdgeInsets.symmetric(vertical: 4.0),
-              child: ScaleTransition(
-                scale: CurvedAnimation(parent: _animationController, curve: Curves.easeOutCubic),
-                child: FloatingActionButton.small(
-                  heroTag: 'fab_tool_finalize_multi',
-                  onPressed: () { if(_isExpanded) _toggleExpand(); widget.onToolSelected(DrawingTool.finalizeMultiPart); },
-                  tooltip: drawingToolDisplayName(DrawingTool.finalizeMultiPart),
-                  backgroundColor: Colors.green, 
-                  child: Icon(_defaultToolIcons[DrawingTool.finalizeMultiPart]),
-                ),
-              ),
-            )
-          );
+           buttons.add(_buildActionButton(
+            DrawingTool.finalizeMultiPart, 
+            _defaultToolIcons[DrawingTool.finalizeMultiPart]!, 
+            drawingToolDisplayName(DrawingTool.finalizeMultiPart), 
+            Colors.green,
+            _animationController
+          ));
         }
     }
 
     if (!drawingState.isMultiPartDrawingInProgress) { 
         final toolsToShow = widget.availableTools.where((tool) => 
-            tool != DrawingTool.none && tool != DrawingTool.cancel && _defaultToolIcons.containsKey(tool)
+            tool != DrawingTool.none && tool != DrawingTool.cancel && 
+            tool != DrawingTool.undo && tool != DrawingTool.redo && // Exclude undo/redo from this list
+            _defaultToolIcons.containsKey(tool)
         ).toList();
 
         for (int i = 0; i < toolsToShow.length; i++) {
           DrawingTool tool = toolsToShow[i];
-          buttons.add(
-            Padding(
-              padding: const EdgeInsets.symmetric(vertical: 4.0), 
-              child: ScaleTransition( 
-                scale: CurvedAnimation( 
-                  parent: _animationController,
-                  curve: Interval(0.1 * i / toolsToShow.length, 0.5 + 0.5 * i / toolsToShow.length, curve: Curves.easeOutCubic)
-                ),
-                child: FloatingActionButton.small(
-                  heroTag: 'fab_tool_${tool.name}', 
-                  onPressed: () { if(_isExpanded) _toggleExpand(); widget.onToolSelected(tool); },
-                  tooltip: drawingToolDisplayName(tool),
-                  backgroundColor: widget.activeTool == tool ? Theme.of(context).primaryColorLight : null, 
-                  child: Icon(_defaultToolIcons[tool]),
-                ),
-              ),
-            )
-          );
+          buttons.add(_buildActionButton(
+            tool, 
+            _defaultToolIcons[tool]!, 
+            drawingToolDisplayName(tool), 
+            widget.activeTool == tool ? Theme.of(context).primaryColorLight : null,
+            _animationController,
+            index: i,
+            total: toolsToShow.length
+          ));
         }
     }
     
     bool anyToolActive = drawingState.currentTool != DrawingTool.none || drawingState.selectedShapeId != null || drawingState.isMultiPartDrawingInProgress;
     if (anyToolActive) { 
-        buttons.add(
-            Padding(
-              padding: const EdgeInsets.symmetric(vertical: 4.0),
-              child: ScaleTransition(
-                scale: CurvedAnimation(parent: _animationController, curve: Curves.easeOutCubic), 
-                child: FloatingActionButton.small(
-                    heroTag: 'fab_tool_cancel_explicit', 
-                    onPressed: () { if(_isExpanded) _toggleExpand(); widget.onToolSelected(DrawingTool.cancel); },
-                    tooltip: drawingToolDisplayName(DrawingTool.cancel),
-                    backgroundColor: Colors.redAccent,
-                    child: Icon(_defaultToolIcons[DrawingTool.cancel]),
-                ),
-              ),
-            )
-        );
+        buttons.add(_buildActionButton(
+          DrawingTool.cancel, 
+          _defaultToolIcons[DrawingTool.cancel]!, 
+          drawingToolDisplayName(DrawingTool.cancel), 
+          Colors.redAccent,
+          _animationController
+        ));
     }
     return buttons;
+  }
+
+  Widget _buildActionButton(DrawingTool tool, IconData icon, String tooltip, Color? backgroundColor, Animation<double> animation, {int index = 0, int total = 1}) {
+    // Determine if the button should be enabled based on canUndo/canRedo for those specific tools
+    VoidCallback? onPressedAction = () { if(_isExpanded) _toggleExpand(); widget.onToolSelected(tool); };
+    if (tool == DrawingTool.undo && !widget.canUndo) {
+      onPressedAction = null;
+    }
+    if (tool == DrawingTool.redo && !widget.canRedo) {
+      onPressedAction = null;
+    }
+    
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4.0),
+      child: ScaleTransition(
+        scale: CurvedAnimation(
+          parent: animation,
+          curve: Interval(0.1 * index / total, 0.5 + 0.5 * index / total, curve: Curves.easeOutCubic),
+        ),
+        child: FloatingActionButton.small(
+          heroTag: 'fab_tool_${tool.name}',
+          onPressed: onPressedAction,
+          tooltip: tooltip,
+          backgroundColor: backgroundColor,
+          child: Icon(icon),
+        ),
+      ),
+    );
   }
 
   @override

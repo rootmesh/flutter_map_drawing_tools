@@ -68,7 +68,19 @@ class DrawingToolsOptions {
     this.pointIconBuilder,
     this.intermediateIconBuilder,
     this.vertexIconBuilder,
-    this.onPlacementInvalid, 
+    this.onPlacementInvalid,
+    this.activeSegmentColor,
+    this.activeSegmentVertexIconBuilder,
+    this.activeSegmentIntermediateIconBuilder,
+    this.completedPartColor,
+    this.completedPartFillColor,
+    this.selectionHighlightBorderWidth = 2.0,
+    this.resizeHandleIcon,
+    this.vertexHandleRadius = 8.0,
+    this.intermediateVertexHandleRadius = 7.0,
+    this.defaultStrokeWidth = 3.0,
+    this.defaultBorderStrokeWidth = 2.0,
+    this.toolbarPosition,
   }) : drawingFillColor = drawingFillColor ?? validDrawingColor.withOpacity(0.3);
 
   /// {@macro validate_shape_placement_callback}
@@ -106,6 +118,58 @@ class DrawingToolsOptions {
   /// Color for interactive editing handles (e.g., resize handles, PolyEditor vertex/intermediate points).
   /// Defaults to [Colors.orangeAccent].
   final Color editingHandleColor;       
+
+  // --- Multi-part drawing specific styles ---
+  /// Color for the line of the active segment being drawn in a multi-part geometry.
+  /// If null, defaults to [temporaryLineColor].
+  final Color? activeSegmentColor;
+
+  /// {@macro simple_icon_builder}
+  /// Used for the main vertex points of the active segment in `PolyEditor` during multi-part drawing.
+  /// If `null`, defaults to a slightly modified version of [vertexIconBuilder] or its default.
+  final SimpleIconBuilder? activeSegmentVertexIconBuilder;
+
+  /// {@macro simple_icon_builder}
+  /// Used for the intermediate points of the active segment in `PolyEditor` during multi-part drawing.
+  /// If `null`, defaults to a slightly modified version of [intermediateIconBuilder] or its default.
+  final SimpleIconBuilder? activeSegmentIntermediateIconBuilder;
+
+  /// Color for the outline of already completed parts of a multi-part geometry during an ongoing drawing session.
+  /// If null, defaults to [validDrawingColor] with some transparency.
+  final Color? completedPartColor;
+  
+  /// Fill color for completed polygon parts during an ongoing drawing session.
+  /// If null, defaults to [drawingFillColor] with further transparency or a derivative of [completedPartColor].
+  final Color? completedPartFillColor;
+  
+  /// The increase in border width for selected shapes.
+  final double selectionHighlightBorderWidth;
+
+  /// Icon used for generic resize handles (e.g., for circles).
+  final Widget? resizeHandleIcon;
+
+  /// Radius for main vertex handles (e.g., in PolyEditor, generic resize corners).
+  final double vertexHandleRadius;
+  
+  /// Radius for intermediate vertex handles (e.g., midpoints in PolyEditor).
+  final double intermediateVertexHandleRadius;
+
+  /// Default stroke width for lines and borders if not otherwise specified.
+  final double defaultStrokeWidth;
+
+  /// Default border stroke width for shapes like polygons if not otherwise specified.
+  /// Can be used for in-progress parts as well.
+  final double defaultBorderStrokeWidth;
+
+  /// Default size for point markers (width and height).
+  /// Defaults to 30.0.
+  final double pointMarkerSize;
+
+  // --- End of Multi-part drawing specific styles ---
+
+  /// Optional position for the [ContextualEditingToolbar]. 
+  /// If null, the toolbar might not be shown or use an internal default position.
+  final Positioned? toolbarPosition;
 
   // Icons / Widgets
   /// {@macro point_icon_builder}
@@ -158,5 +222,35 @@ class DrawingToolsOptions {
       return vertexIconBuilder!();
     }
     return Icon(Icons.circle, size: 20, color: editingHandleColor.withOpacity(0.8));
+  }
+
+  // Helper methods for multi-part active segment icons
+  /// Helper method for `PolyEditor` active segment vertex icons.
+  ///
+  /// Provides a default [Icon] if [activeSegmentVertexIconBuilder] is not set,
+  /// falling back to [getVertexIcon] with a different color if needed.
+  Widget getActiveSegmentVertexIcon() {
+    if (activeSegmentVertexIconBuilder != null) {
+      return activeSegmentVertexIconBuilder!();
+    }
+    // Example: Use the standard vertex icon but with activeSegmentColor or a distinct color
+    return Icon(Icons.my_location, size: 20, color: activeSegmentColor ?? temporaryLineColor); 
+  }
+
+  /// Helper method for `PolyEditor` active segment intermediate (midpoint) icons.
+  ///
+  /// Provides a default [Icon] if [activeSegmentIntermediateIconBuilder] is not set,
+  /// falling back to [getIntermediateIcon] with a different color if needed.
+  Widget getActiveSegmentIntermediateIcon() {
+    if (activeSegmentIntermediateIconBuilder != null) {
+      return activeSegmentIntermediateIconBuilder!();
+    }
+    // Example: Use the standard intermediate icon but with activeSegmentColor or a distinct color
+    return Icon(Icons.add_location_alt_outlined, size: intermediateVertexHandleRadius * 2, color: (activeSegmentColor ?? temporaryLineColor).withOpacity(0.7));
+  }
+
+  // Default resize handle icon if not provided by resizeHandleIcon
+  Widget getResizeHandleIcon() {
+    return resizeHandleIcon ?? Icon(Icons.drag_handle, size: vertexHandleRadius * 1.5, color: editingHandleColor);
   }
 }

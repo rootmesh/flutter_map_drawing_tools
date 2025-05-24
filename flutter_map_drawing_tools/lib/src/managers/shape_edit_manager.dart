@@ -16,6 +16,7 @@ class ShapeEditManager {
   final DrawingState drawingState;
   final DrawingToolsOptions options;
   final MapController mapController; // For map interaction control if needed
+  final DimensionDisplayModel dimensionDisplayModel; // Added for numerical input UI
 
   MapTransformer? _mapTransformer; // Will be updated via a method
 
@@ -27,6 +28,7 @@ class ShapeEditManager {
     required this.drawingState,
     required this.options,
     required this.mapController,
+    required this.dimensionDisplayModel, // Added
   });
 
   void updateMapTransformer(MapTransformer transformer) {
@@ -127,6 +129,39 @@ class ShapeEditManager {
     }
 
     if (newDraftShape != null) {
+      // Apply temporary/editing styles before setting as draft
+      if (newDraftShape is PolygonShapeData) {
+        newDraftShape = PolygonShapeData(
+          polygon: newDraftShape.polygon.copyWith(
+            color: options.drawingFillColor.withOpacity(0.5), // Example editing fill
+            borderColor: options.editingHandleColor,
+            borderStrokeWidth: options.defaultBorderStrokeWidth,
+          ),
+          id: newDraftShape.id,
+          label: newDraftShape.label,
+        );
+      } else if (newDraftShape is PolylineShapeData) {
+        newDraftShape = PolylineShapeData(
+          polyline: newDraftShape.polyline.copyWith(
+            color: options.editingHandleColor,
+            strokeWidth: options.defaultStrokeWidth,
+          ),
+          id: newDraftShape.id,
+          label: newDraftShape.label,
+        );
+      } else if (newDraftShape is CircleShapeData) {
+        newDraftShape = CircleShapeData(
+          circleMarker: newDraftShape.circleMarker.copyWith(
+            color: options.drawingFillColor.withOpacity(0.5),
+            borderColor: options.editingHandleColor,
+            borderStrokeWidth: options.defaultStrokeWidth,
+          ),
+          id: newDraftShape.id,
+          label: newDraftShape.label,
+        );
+      }
+      // MarkerShapeData typically doesn't have complex fill/border styles for this context
+
       drawingState.setDraftShapeDataWhileDragging(newDraftShape);
     }
   }
@@ -251,11 +286,179 @@ class ShapeEditManager {
       }
     }
     // Add Polyline scaling if necessary
+    } else if (shapeToScale is PolylineShapeData) {
+      final initialPolyline = shapeToScale.polyline;
+      final initialPoints = initialPolyline.points;
+      if (initialPoints.isEmpty) return;
+
+      // Naive proportional scaling from centroid for polylines
+      // A specific handleId would determine the anchor point for more complex scaling
+      CustomPoint centerPixel = _mapTransformer!.latLngToPixel(centerGeo, _mapTransformer!.centerZoom.zoom);
+      CustomPoint handlePixel = _mapTransformer!.latLngToPixel(dragPosition, _mapTransformer!.centerZoom.zoom);
+      
+      // Assuming a conceptual original handle position. For polylines, this is tricky without defined handles.
+      // Let's use the furthest point in the initial shape as a reference for the original handle distance.
+      double maxInitialDistSq = 0;
+      for (var p in initialPoints) {
+        final pPixel = _mapTransformer!.latLngToPixel(p, _mapTransformer!.centerZoom.zoom);
+        maxInitialDistSq = math.max(maxInitialDistSq, centerPixel.squaredDistance(pPixel));
+      }
+      if (maxInitialDistSq == 0) return; // Avoid division by zero if all points are at centroid
+      double initialHandleDistance = math.sqrt(maxInitialDistSq);
+      
+      double currentHandleDistance = centerPixel.distance(handlePixel);
+      if (initialHandleDistance < 1e-3) return; // Avoid division by zero or extreme scaling
+
+      double scaleFactor = currentHandleDistance / initialHandleDistance;
+      if (!scaleFactor.isFinite || scaleFactor <= 1e-3) scaleFactor = 1e-3; // Prevent zero or invalid scale
+
+      final originalBasePoints = (drawingState.originalShapeDataBeforeDrag as PolylineShapeData).polyline.points;
+      List<LatLng> newPoints = originalBasePoints.map((p) {
+        return _scalePoint(p, centerGeo, scaleFactor, _mapTransformer!);
+      }).toList();
+
+      // Apply rotation if any
+      double currentRotationAngle = (drawingState.draftShapeDataWhileDragging as PolylineShapeData).rotationAngle;
+      if (currentRotationAngle != 0.0) {
+        newPoints = newPoints.map((p) => _rotatePoint(p, centerGeo, currentRotationAngle, _mapTransformer!)).toList();
+      }
+      
+      newDraftShape = (drawingState.draftShapeDataWhileDragging as PolylineShapeData).copyWithUpdatedGeometry(
+         Polyline(points: newPoints) // Keep style from current draft, update points
+      );
+    }
+
 
     if (newDraftShape != null) {
+      // Apply temporary/editing styles (already done in previous step for drag, ensure for resize too)
+       newDraftShape = _applyEditingStyles(newDraftShape);
       drawingState.setDraftShapeDataWhileDragging(newDraftShape);
+      _updateDimensionModelFromShape(newDraftShape);
     }
   }
+  
+  ShapeData? rescaleShapeNumerically(ShapeData currentShape, Map<String, double> dimensions) {
+    ShapeData? rescaledShape;
+
+    if (currentShape is CircleShapeData) {
+      if (dimensions.containsKey('radius')) {
+        double newRadius = dimensions['radius']!;
+        if (newRadius > 0) {
+          rescaledShape = currentShape.copyWithCircleMarker(
+            currentShape.circleMarker.copyWith(radius: newRadius),
+          );
+        }
+      }
+    } else if (currentShape is PolygonShapeData) {
+      // Basic example for an axis-aligned rectangle, assuming center anchor
+      // A more robust solution needs to handle various anchors and possibly rotation.
+      // For now, this assumes the polygon is a rectangle and we scale from its center.
+      if (dimensions.containsKey('width') || dimensions.containsKey('height')) {
+        final currentPolygon = currentShape.polygon;
+        final center = currentShape.centroid; // Assuming centroid is the center
+        
+        // Calculate current approximate width/height (for axis-aligned)
+        double currentMinX = double.infinity, currentMaxX = double.negativeInfinity;
+        double currentMinY = double.infinity, currentMaxY = double.negativeInfinity;
+        for (var p in currentPolygon.points) {
+          currentMinX = math.min(currentMinX, p.longitude);
+          currentMaxX = math.max(currentMaxX, p.longitude);
+          currentMinY = math.min(currentMinY, p.latitude);
+          currentMaxY = math.max(currentMaxY, p.latitude);
+        }
+        // These are geo-width/height, not necessarily screen width/height
+        double currentGeoWidth = currentMaxX - currentMinX; 
+        double currentGeoHeight = currentMaxY - currentMinY;
+
+        double newGeoWidth = dimensions['width'] ?? currentGeoWidth;
+        double newGeoHeight = dimensions['height'] ?? currentGeoHeight;
+
+        if (newGeoWidth > 0 && newGeoHeight > 0 && currentGeoWidth > 0 && currentGeoHeight > 0) {
+          double scaleX = newGeoWidth / currentGeoWidth;
+          double scaleY = newGeoHeight / currentGeoHeight;
+
+          List<LatLng> newPoints = currentPolygon.points.map((p) {
+            double newLng = center.longitude + (p.longitude - center.longitude) * scaleX;
+            double newLat = center.latitude + (p.latitude - center.latitude) * scaleY;
+            return LatLng(newLat, newLng);
+          }).toList();
+          
+          // Ensure polygon is closed if it's supposed to be
+          if (newPoints.length > 1 && newPoints.first != newPoints.last && currentPolygon.points.first == currentPolygon.points.last) {
+              newPoints.add(newPoints.first);
+          }
+
+
+          List<List<LatLng>>? newHolePointsList;
+          if (currentPolygon.holePointsList != null) {
+            newHolePointsList = currentPolygon.holePointsList!.map((hole) {
+              return hole.map((p) {
+                double newLng = center.longitude + (p.longitude - center.longitude) * scaleX;
+                double newLat = center.latitude + (p.latitude - center.latitude) * scaleY;
+                return LatLng(newLat, newLng);
+              }).toList();
+            }).toList();
+          }
+          
+          rescaledShape = currentShape.copyWithPolygon(
+            currentPolygon.copyWithGeometry(points: newPoints, holePointsList: newHolePointsList),
+          );
+        }
+      }
+    }
+
+    if (rescaledShape != null) {
+      // Re-apply temporary/editing styles as this creates a new geometry
+      if (rescaledShape is PolygonShapeData) {
+        rescaledShape = PolygonShapeData(
+          polygon: rescaledShape.polygon.copyWith(
+            color: options.drawingFillColor.withOpacity(0.5),
+            borderColor: options.editingHandleColor,
+            borderStrokeWidth: options.defaultBorderStrokeWidth,
+          ),
+          id: rescaledShape.id, label: rescaledShape.label,
+        );
+      } else if (rescaledShape is CircleShapeData) {
+         rescaledShape = CircleShapeData(
+          circleMarker: rescaledShape.circleMarker.copyWith(
+            color: options.drawingFillColor.withOpacity(0.5),
+            borderColor: options.editingHandleColor,
+            borderStrokeWidth: options.defaultStrokeWidth,
+          ),
+          id: rescaledShape.id, label: rescaledShape.label,
+        );
+      }
+      // Update dimension model after numerical rescale
+      _updateDimensionModelFromShape(rescaledShape);
+    }
+    return rescaledShape;
+  }
+
+  void _updateDimensionModelFromShape(ShapeData shape) {
+    if (shape is CircleShapeData) {
+      dimensionDisplayModel.updateDimensions(radius: shape.circleMarker.radius);
+    } else if (shape is PolygonShapeData) {
+      // Approximate width/height for an axis-aligned bounding box
+      if (shape.polygon.points.isNotEmpty) {
+        double minX = double.infinity, maxX = double.negativeInfinity;
+        double minY = double.infinity, maxY = double.negativeInfinity;
+        for (var p in shape.polygon.points) {
+          minX = math.min(minX, p.longitude);
+          maxX = math.max(maxX, p.longitude);
+          minY = math.min(minY, p.latitude);
+          maxY = math.max(maxY, p.latitude);
+        }
+        // This is a geographical extent. Converting to meters would be more complex
+        // and depend on latitude. For simplicity, using geo-degrees for now.
+        // A proper solution would calculate screen dimensions or use projected coordinates.
+        // Or, for true rectangles, store width/height metadata.
+        dimensionDisplayModel.updateDimensions(width: maxX - minX, height: maxY - minY);
+      }
+    } else {
+      dimensionDisplayModel.clear(); // No relevant dimensions for other shapes
+    }
+  }
+
 
   /// Called when a rotation handle is dragged.
   /// [dragPosition] is the new geographical position of the rotation handle.
