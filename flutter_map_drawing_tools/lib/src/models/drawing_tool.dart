@@ -2,6 +2,10 @@
 enum DrawingTool {
   /// Tool for drawing free-form polygons.
   polygon,
+  /// Tool for drawing multi-segment polylines.
+  multiPolyline,
+  /// Tool for drawing multi-part polygons (e.g., polygons with holes, or multiple disjoint polygons).
+  multiPolygon,
   /// Tool for drawing rectangles.
   rectangle,
   /// Tool for drawing pentagons (5-sided regular polygons).
@@ -25,7 +29,11 @@ enum DrawingTool {
   /// Action to complete the current part of a multi-part drawing (e.g., finish the exterior ring of a polygon and start a hole).
   completePart, 
   /// Action to finalize the entire multi-part drawing (e.g., save the polygon with all its holes).
-  finalizeMultiPart, 
+  finalizeMultiPart,
+  /// Action to undo the last operation.
+  undo,
+  /// Action to redo the last undone operation.
+  redo,
 }
 
 /// Returns a user-friendly display name for a given [DrawingTool].
@@ -34,6 +42,8 @@ enum DrawingTool {
 String drawingToolDisplayName(DrawingTool tool) {
   switch (tool) {
     case DrawingTool.polygon: return 'Polygon';
+    case DrawingTool.multiPolyline: return 'Multi-Polyline';
+    case DrawingTool.multiPolygon: return 'Multi-Polygon';
     case DrawingTool.rectangle: return 'Rectangle';
     case DrawingTool.pentagon: return 'Pentagon';
     case DrawingTool.hexagon: return 'Hexagon';
@@ -45,6 +55,8 @@ String drawingToolDisplayName(DrawingTool tool) {
     case DrawingTool.cancel: return 'Cancel';
     case DrawingTool.completePart: return 'Complete Part';
     case DrawingTool.finalizeMultiPart: return 'Finalize Drawing';
+    case DrawingTool.undo: return 'Undo';
+    case DrawingTool.redo: return 'Redo';
     case DrawingTool.none: return 'None';
     default: return ''; // Should not happen
   }

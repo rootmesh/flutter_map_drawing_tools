@@ -24,7 +24,19 @@ abstract class ShapeData {
 
   /// Creates and returns a deep copy of this shape data object.
   /// Must be implemented by subclasses.
-  ShapeData copy(); 
+  ShapeData copy();
+
+  /// The rotation angle of the shape in radians, around its centroid.
+  /// Defaults to 0.0.
+  double get rotationAngle => 0.0; // Base implementation, subclasses should override if they store it
+
+  /// Returns a new instance of the shape with the given rotation angle.
+  /// Subclasses should override this to handle actual rotation.
+  ShapeData copyWithRotation(double newRotationAngle) {
+    // Base implementation might just return a copy if rotation is not applicable.
+    // Or throw UnimplementedError if subclasses are expected to always implement.
+    return copy(); 
+  }
 }
 
 /// {@template edit_mode}
@@ -238,6 +250,16 @@ class DrawingState extends ChangeNotifier {
     }
   }
 
+  /// Updates the last (active) part of the current multi-part drawing with a new list of points.
+  /// This is crucial for reflecting changes from PolyEditor back into the DrawingState.
+  /// Notifies listeners.
+  void updateLastPart(List<LatLng> points) {
+    if (_currentDrawingParts.isNotEmpty) {
+      _currentDrawingParts.last = List.from(points); // Ensure it's a new list instance
+      notifyListeners();
+    }
+  }
+
   /// Retrieves the completed drawing parts and clears them from the state.
   /// Used by [DrawingLayer] when finalizing a multi-part shape.
   /// Notifies listeners after clearing.
@@ -254,6 +276,22 @@ class DrawingState extends ChangeNotifier {
     if (_currentDrawingParts.isNotEmpty || _activeMultiPartTool != null) {
       _currentDrawingParts.clear();
       _activeMultiPartTool = null;
+      notifyListeners();
+    }
+  }
+
+  // Use with caution, primarily for undo/redo commands to restore state.
+  void dangerouslySetCurrentDrawingParts(List<List<LatLng>> parts, DrawingTool? tool) {
+    _currentDrawingParts = List.from(parts.map((part) => List.from(part))); // Ensure deep copy
+    _activeMultiPartTool = tool;
+    notifyListeners();
+  }
+
+  /// Removes the last point from the currently active part of a multi-part drawing.
+  /// Notifies listeners if a point was removed.
+  void removeLastPointFromCurrentPart() {
+    if (_currentDrawingParts.isNotEmpty && _currentDrawingParts.last.isNotEmpty) {
+      _currentDrawingParts.last.removeLast();
       notifyListeners();
     }
   }

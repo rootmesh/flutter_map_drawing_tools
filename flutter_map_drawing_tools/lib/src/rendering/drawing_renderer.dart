@@ -43,12 +43,12 @@ class DrawingRenderer {
     List<Widget> layers = [];
 
     layers.addAll(_buildFinalizedShapesLayers());
+    layers.addAll(_buildInProgressMultiPartLayers()); // Render completed parts of ongoing multi-part drawing
     layers.addAll(_buildTemporaryAndDraftShapesLayers());
     layers.addAll(_buildPolyEditorLayers());
-    layers.addAll(_buildResizeHandlesLayers()); // Placeholder for future generic resize handles
+    layers.addAll(_buildResizeHandlesLayers()); 
     layers.addAll(_buildContextualToolbarLayer(context));
 
-    // Filter out null layers if any helper method could return null
     return layers.where((layer) => layer != null).cast<Widget>().toList();
   }
 
@@ -59,21 +59,16 @@ class DrawingRenderer {
     List<Marker> markers = [];
 
     for (var shapeData in drawingState.currentShapes) {
-      // Do not render the shape if it's currently being vertex-edited by PolyEditor,
-      // as PolyEditor will render its own version.
       if (drawingState.selectedShapeId == shapeData.id && drawingState.activeEditMode == EditMode.vertexEditing) {
         continue;
       }
-      // Similarly, if a shape is being dragged/scaled/rotated, its 'draft' version will be rendered instead.
       if (drawingState.selectedShapeId == shapeData.id && 
           drawingState.draftShapeDataWhileDragging?.id == shapeData.id &&
           (drawingState.activeEditMode == EditMode.dragging || 
            drawingState.activeEditMode == EditMode.scaling || 
-           drawingState.activeEditMode == EditMode.rotating)
-          ) {
+           drawingState.activeEditMode == EditMode.rotating)) {
         continue;
       }
-
 
       if (shapeData is PolygonShapeData) {
         polygons.add(_applySelectionHighlight(shapeData.polygon, shapeData.id));
@@ -82,9 +77,24 @@ class DrawingRenderer {
       } else if (shapeData is CircleShapeData) {
         circles.add(_applySelectionHighlight(shapeData.circleMarker, shapeData.id));
       } else if (shapeData is MarkerShapeData) {
-        // Marker highlighting might involve changing the child widget, which is more complex.
-        // For now, markers are not visually highlighted on selection.
         markers.add(shapeData.marker);
+      } else if (shapeData is MultiPolylineShapeData) {
+        for (var polyline in shapeData.polylines) {
+          // Apply selection highlight to each part if the parent multi-shape is selected
+          Polyline displayPolyline = polyline;
+          if (drawingState.selectedShapeId == shapeData.id) {
+            displayPolyline = _applySelectionHighlight(polyline, shapeData.id);
+          }
+          polylines.add(displayPolyline);
+        }
+      } else if (shapeData is MultiPolygonShapeData) {
+        for (var polygon in shapeData.polygons) {
+          Polygon displayPolygon = polygon;
+          if (drawingState.selectedShapeId == shapeData.id) {
+            displayPolygon = _applySelectionHighlight(polygon, shapeData.id);
+          }
+          polygons.add(displayPolygon);
+        }
       }
     }
 
@@ -96,11 +106,58 @@ class DrawingRenderer {
     
     return layers;
   }
+  
+  List<Widget> _buildInProgressMultiPartLayers() {
+    if (!drawingState.isMultiPartDrawingInProgress || drawingState.currentDrawingParts.length <= 1) {
+      // Only render if there are completed parts (more than just the active segment)
+      return [];
+    }
+
+    List<Polygon> completedPolygons = [];
+    List<Polyline> completedPolylines = [];
+    
+    // Iterate over all parts except the last one (which is the active segment handled by PolyEditorManager)
+    for (int i = 0; i < drawingState.currentDrawingParts.length - 1; i++) {
+      List<LatLng> partPoints = drawingState.currentDrawingParts[i];
+      if (partPoints.isEmpty) continue;
+
+      if (drawingState.activeMultiPartTool == DrawingTool.polygon || drawingState.activeMultiPartTool == DrawingTool.multiPolygon) {
+        if (partPoints.length < 3) continue; // Not enough points for a polygon
+        List<LatLng> closedPartPoints = List.from(partPoints);
+        if (closedPartPoints.first.latitude != closedPartPoints.last.latitude || closedPartPoints.first.longitude != closedPartPoints.last.longitude) {
+          closedPartPoints.add(closedPartPoints.first);
+        }
+        completedPolygons.add(Polygon(
+          points: closedPartPoints,
+          color: options.completedPartFillColor ?? options.drawingFillColor.withOpacity(0.5),
+          borderColor: options.completedPartColor ?? options.validDrawingColor.withOpacity(0.7),
+          borderStrokeWidth: options.defaultBorderStrokeWidth, // Use option
+          isFilled: true,
+        ));
+      } else if (drawingState.activeMultiPartTool == DrawingTool.polyline || drawingState.activeMultiPartTool == DrawingTool.multiPolyline) {
+        if (partPoints.length < 2) continue; // Not enough points for a polyline
+        completedPolylines.add(Polyline(
+          points: partPoints,
+          color: options.completedPartColor ?? options.validDrawingColor.withOpacity(0.7),
+          strokeWidth: options.defaultStrokeWidth, // Use option
+        ));
+      }
+    }
+
+    List<Widget> layers = [];
+    if (completedPolygons.isNotEmpty) {
+      layers.add(PolygonLayer(polygons: completedPolygons, polygonCulling: options.polygonCulling));
+    }
+    if (completedPolylines.isNotEmpty) {
+      layers.add(PolylineLayer(polylines: completedPolylines, polylineCulling: options.polylineCulling));
+    }
+    return layers;
+  }
 
   List<Widget> _buildTemporaryAndDraftShapesLayers() {
     List<Widget> layers = [];
     ShapeData? shapeToRender;
-    bool isTemporary = false;
+    // bool isTemporary = false; // isTemporary flag seems unused with new logic
 
     if (drawingState.draftShapeDataWhileDragging != null && 
         (drawingState.activeEditMode == EditMode.dragging || 
@@ -110,38 +167,36 @@ class DrawingRenderer {
     } else if (drawingState.temporaryShape != null && 
                (drawingState.currentTool == DrawingTool.circle || 
                 drawingState.currentTool == DrawingTool.rectangle ||
-                drawingState.currentTool == DrawingTool.square 
-                /* add other tools that use temporaryShape */
+                drawingState.currentTool == DrawingTool.square ||
+                // Add other tools that use temporaryShape.
+                // Note: Pentagon, Hexagon, Octagon might use temporaryShape if they are drawn via a two-point drag.
+                drawingState.currentTool == DrawingTool.pentagon ||
+                drawingState.currentTool == DrawingTool.hexagon ||
+                drawingState.currentTool == DrawingTool.octagon 
                )) {
       shapeToRender = drawingState.temporaryShape;
-      isTemporary = true;
+      // isTemporary = true; // Unused
     }
     
-    if (shapeToRender == null) return layers;
+    if (shapeToRender == null) return layers; // layers is not defined here, should be: if (shapeToRender == null) return [];
 
-    // The NewShapeGestureManager now sets the correct valid/invalid color directly on the _draftShapeData.
-    // So, the renderer should just use the colors from the shapeToRender.
-    // No need to determine tempBorderColor/tempFillColor here based on 'isTemporary' flag.
+
+    List<Widget> tempLayers = []; // Define tempLayers here
 
     if (shapeToRender is PolygonShapeData) {
-      // Ensure the provided polygon from shapeToRender is used directly,
-      // as its colors are already set by the gesture manager.
-      layers.add(PolygonLayer(polygons: [shapeToRender.polygon], polygonCulling: options.polygonCulling));
+      tempLayers.add(PolygonLayer(polygons: [shapeToRender.polygon], polygonCulling: options.polygonCulling));
     } else if (shapeToRender is PolylineShapeData) { 
-      // Polylines used for temporary/draft purposes are typically handled by PolyEditorManager,
-      // but if NewShapeGestureManager were to produce one, it would also have its color pre-set.
-      layers.add(PolylineLayer(polylines: [shapeToRender.polyline], polylineCulling: options.polylineCulling));
+      tempLayers.add(PolylineLayer(polylines: [shapeToRender.polyline], polylineCulling: options.polylineCulling));
     } else if (shapeToRender is CircleShapeData) {
-      // Ensure the provided circleMarker from shapeToRender is used directly.
-      layers.add(CircleLayer(circles: [shapeToRender.circleMarker], circleCulling: options.circleCulling));
+      tempLayers.add(CircleLayer(circles: [shapeToRender.circleMarker], circleCulling: options.circleCulling));
     }
-    // Markers are usually not temporary in this way for complex drag-drawing; they are placed directly.
 
-    return layers;
+    return tempLayers;
   }
 
   List<Widget> _buildPolyEditorLayers() {
-    if (!polyEditorManager._isActive) return []; // Use the internal flag from PolyEditorManager
+    // Accessing internal _isActive. Consider exposing a getter in PolyEditorManager if this direct access is undesirable.
+    if (!polyEditorManager.instance!.isActive) return []; 
 
     List<Widget> layers = [];
     final polyline = polyEditorManager.getPolylineForRendering();
@@ -174,10 +229,10 @@ class DrawingRenderer {
         LatLng handlePos = const Distance().offset(center, radius, 90); // 90 degrees = East
         handles.add(DragMarker(
           point: handlePos,
-          width: options.vertexHandleRadius * 2.5, // Make it slightly larger or use a specific icon
+          width: options.vertexHandleRadius * 2.5, 
           height: options.vertexHandleRadius * 2.5,
-          offset: Offset(0, -options.vertexHandleRadius), // Adjust anchor
-          child: options.resizeHandleIcon ?? Icon(Icons.drag_handle, color: options.editingHandleColor),
+          offset: Offset(options.vertexHandleRadius * 1.25, options.vertexHandleRadius * 1.25), // Adjust to center if icon anchor is top-left
+          child: options.getResizeHandleIcon(), // Use the new helper
           onDragUpdate: (details, newPos) {
             // In DrawingLayerCoordinator: shapeEditManager.handleResize("circle_radius_handle", newPos);
           },
@@ -187,6 +242,48 @@ class DrawingRenderer {
         ));
       }
       // TODO: Add handles for rectangles if they are not PolyShapeData edited by PolyEditor
+    } else if (shape is PolygonShapeData && shape.polygon.points.isNotEmpty) {
+        // Example: Add a scaling handle to the last point of the polygon
+        // This is a simplified example. Proper handles would be at corners of a bounding box.
+        LatLng lastPoint = shape.polygon.points.last; 
+        
+        // If the shape is rotated, the handle's visual position needs to account for this.
+        // This requires access to MapTransformer here or pre-rotated points for handles.
+        // For simplicity, let's assume for now the handle is based on the raw point,
+        // and ShapeEditManager's handleResize knows how to interpret it with rotation.
+        // A more accurate approach would be to calculate the rotated position of this handle.
+        // Let's assume `shape.centroid` and `shape.rotationAngle` are available.
+        // And we have a _rotatePoint utility (similar to the one in ShapeEditManager).
+        // LatLng rotatedHandlePos = _rotatePoint(lastPoint, shape.centroid, shape.rotationAngle, mapTransformer);
+        // This ^ requires mapTransformer. For now, use raw point.
+
+        handles.add(DragMarker(
+          point: lastPoint, // Ideally, this is the rotated position of the handle's anchor
+          width: options.vertexHandleRadius * 2.5,
+          height: options.vertexHandleRadius * 2.5,
+          offset: Offset(options.vertexHandleRadius * 1.25, options.vertexHandleRadius * 1.25),
+          child: options.getResizeHandleIcon(), // A generic scale icon
+          onDragStart: (details, point) {
+            // Notify ShapeEditManager that a specific handle drag has started.
+            // This helps ShapeEditManager determine the anchor point for scaling.
+            // For example, if this is the "bottom-right" handle, the anchor is "top-left".
+            // _shapeEditManager.startHandleInteraction(shape, "polygon_corner_br", point);
+          },
+          onDragUpdate: (details, newPos) {
+            // Pass a handleId that ShapeEditManager can use
+            // For this example, "polygon_corner_br" implies bottom-right.
+            // In a real system, this would be derived from which handle was actually created/dragged.
+            // _shapeEditManager.handleResize("polygon_corner_br", newPos); 
+            // The above line should be:
+            // widget.shapeEditManager.handleResize("polygon_corner_br", newPos);
+            // but DrawingRenderer doesn't have direct access to ShapeEditManager instance
+            // This interaction needs to be plumbed through DrawingLayerCoordinator
+            // For now, this is a conceptual placement.
+          },
+          onDragEnd: (details) {
+            // _shapeEditManager.endHandleInteraction();
+          },
+        ));
     }
     
     if (handles.isNotEmpty) {
@@ -248,20 +345,19 @@ class DrawingRenderer {
     // Apply highlight based on shape type
     if (shape is Polygon) {
       return shape.copyWith(
-        borderColor: options.selectedShapeColor,
-        borderStrokeWidth: (shape.borderStrokeWidth ?? 1.0) + options.selectedShapeBorderWidthIncrease,
-        // color: shape.color?.withOpacity(0.8) ?? options.selectedShapeColor.withOpacity(0.3), // Optional: change fill
+        borderColor: options.selectionHighlightColor, // Corrected option
+        borderStrokeWidth: (shape.borderStrokeWidth ?? options.defaultBorderStrokeWidth) + options.selectionHighlightBorderWidth,
       ) as T;
     } else if (shape is Polyline) {
       return shape.copyWith(
-        color: options.selectedShapeColor,
-        strokeWidth: shape.strokeWidth + options.selectedShapeBorderWidthIncrease,
+        color: options.selectionHighlightColor, // Corrected option
+        // Assuming strokeWidth is the primary visual for polyline selection thickness
+        strokeWidth: shape.strokeWidth + options.selectionHighlightBorderWidth,
       ) as T;
     } else if (shape is CircleMarker) {
       return shape.copyWith(
-        borderColor: options.selectedShapeColor,
-        borderStrokeWidth: (shape.borderStrokeWidth ?? 1.0) + options.selectedShapeBorderWidthIncrease,
-        // color: shape.color.withOpacity(0.8) ?? options.selectedShapeColor.withOpacity(0.3), // Optional: change fill
+        borderColor: options.selectionHighlightColor, // Corrected option
+        borderStrokeWidth: (shape.borderStrokeWidth ?? options.defaultBorderStrokeWidth) + options.selectionHighlightBorderWidth,
       ) as T;
     }
     return shape;

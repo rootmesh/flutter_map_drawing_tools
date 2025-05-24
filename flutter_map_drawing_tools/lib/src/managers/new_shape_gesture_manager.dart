@@ -119,9 +119,9 @@ class NewShapeGestureManager {
         _draftShapeData = PolygonShapeData(
           polygon: Polygon(
             points: initialPoints, 
-            color: options.temporaryLineColor.withOpacity(0.3), // Default color
+            color: options.drawingFillColor, // Use drawingFillColor
             borderColor: options.temporaryLineColor,
-            borderStrokeWidth: 2,
+            borderStrokeWidth: options.defaultBorderStrokeWidth, // Use option
             isFilled: true,
           ),
           id: "draft_rectangle_${DateTime.now().millisecondsSinceEpoch}" 
@@ -133,7 +133,8 @@ class NewShapeGestureManager {
           options.onPlacementInvalid?.call("Rectangle starting point is not allowed here.");
           // Update color to invalid
           _draftShapeData = (_draftShapeData as PolygonShapeData).copyWithColor(
-              options.invalidDrawingColor.withOpacity(0.3), options.invalidDrawingColor);
+              options.invalidDrawingColor.withOpacity(options.drawingFillColor.opacity), // Consistent opacity
+              options.invalidDrawingColor);
         }
         drawingState.setTemporaryShape(_draftShapeData);
         _setMapInteractive(false);
@@ -158,9 +159,9 @@ class NewShapeGestureManager {
             circleMarker: CircleMarker(
               point: center,
               radius: radius,
-              color: options.temporaryLineColor.withOpacity(0.3),
+              color: options.drawingFillColor, // Use drawingFillColor
               borderColor: options.temporaryLineColor,
-              borderStrokeWidth: 2,
+              borderStrokeWidth: options.defaultStrokeWidth, // Use option for circles
               useRadiusInMeter: true,
             ),
             id: (_draftShapeData as CircleShapeData).id 
@@ -234,9 +235,9 @@ class NewShapeGestureManager {
           _draftShapeData = PolygonShapeData(
             polygon: Polygon(
               points: points,
-              color: _isCurrentDraftInvalid ? options.invalidDrawingColor.withOpacity(0.3) : options.temporaryLineColor.withOpacity(0.3),
+              color: _isCurrentDraftInvalid ? options.invalidDrawingColor.withOpacity(options.drawingFillColor.opacity) : options.drawingFillColor,
               borderColor: _isCurrentDraftInvalid ? options.invalidDrawingColor : options.temporaryLineColor,
-              borderStrokeWidth: 2,
+              borderStrokeWidth: options.defaultBorderStrokeWidth, // Use option
               isFilled: true,
             ),
              id: (_draftShapeData as PolygonShapeData).id 
@@ -279,9 +280,9 @@ class NewShapeGestureManager {
       circleMarker: CircleMarker(
         point: center,
         radius: 1, 
-        color: options.temporaryLineColor.withOpacity(0.3), // Default color
+        color: options.drawingFillColor, // Use drawingFillColor
         borderColor: options.temporaryLineColor,
-        borderStrokeWidth: 2,
+        borderStrokeWidth: options.defaultStrokeWidth, // Use option for circles
         useRadiusInMeter: true,
       ),
       id: "draft_circle_${DateTime.now().millisecondsSinceEpoch}" 
@@ -313,7 +314,7 @@ class NewShapeGestureManager {
       }
       // Update color based on validity
       _draftShapeData = (_draftShapeData as CircleShapeData).copyWithColor(
-          _isCurrentDraftInvalid ? options.invalidDrawingColor.withOpacity(0.3) : options.temporaryLineColor.withOpacity(0.3),
+          _isCurrentDraftInvalid ? options.invalidDrawingColor.withOpacity(options.drawingFillColor.opacity) : options.drawingFillColor,
           _isCurrentDraftInvalid ? options.invalidDrawingColor : options.temporaryLineColor
       );
     }
@@ -329,9 +330,9 @@ class NewShapeGestureManager {
       final circleData = _draftShapeData as CircleShapeData;
       if (circleData.circleMarker.radius > 0) { 
         final finalCircle = circleData.copyWithColor(
-            options.validDrawingColor.withOpacity(options.drawingFillColor.opacity), // Use opacity from drawingFillColor for consistency
-            options.validDrawingColor
-        );
+            options.drawingFillColor, // Use drawingFillColor for final fill
+            options.validDrawingColor // Use validDrawingColor for final border
+        ).copyWithBorderWidth(options.defaultStrokeWidth); // Ensure final border width
         onShapeFinalized(finalCircle);
       }
     }
@@ -351,9 +352,9 @@ class NewShapeGestureManager {
            polygonData.polygon.points[0].longitude != polygonData.polygon.points[2].longitude)
       ) {
         final finalPolygon = polygonData.copyWithColor(
-            options.validDrawingColor.withOpacity(options.drawingFillColor.opacity),
-            options.validDrawingColor
-        );
+            options.drawingFillColor, // Use drawingFillColor for final fill
+            options.validDrawingColor // Use validDrawingColor for final border
+        ).copyWithBorderWidth(options.defaultBorderStrokeWidth); // Ensure final border width
         onShapeFinalized(finalPolygon);
       }
     }
@@ -361,19 +362,17 @@ class NewShapeGestureManager {
   }
 
   void _finalizePoint(LatLng point) {
-    if (_isCurrentDraftInvalid) { // Checked before calling _finalizePoint now
+    if (_isCurrentDraftInvalid) { 
         options.onPlacementInvalid?.call("Cannot finalize: Point placement is invalid.");
-        _resetDrawingState(); // Clear any temporary visual indication of invalid point
+        _resetDrawingState(); 
         return;
     }
-    // No _draftShapeData for point, validation happens directly in _handleTap.
-    // If we decide to show a temporary invalid point marker, then _draftShapeData would be used.
     final pointShape = MarkerShapeData(
       marker: Marker(
         point: point,
-        width: options.pointMarkerSize,
-        height: options.pointMarkerSize,
-        child: options.getPointIcon(null, false), // Use helper from options for default icon
+        width: options.pointMarkerSize, // Use option
+        height: options.pointMarkerSize, // Use option
+        child: options.getPointIcon(null, false), 
       ),
     );
     onShapeFinalized(pointShape);
@@ -455,14 +454,11 @@ class NewShapeGestureManager {
       final newPolygon = Polygon(
         points: exteriorRingPoints,
         holePointsList: holeRingsPoints,
-        color: options.validDrawingColor.withOpacity(options.drawingFillColor.opacity),
+        color: options.drawingFillColor, // Use drawingFillColor
         borderColor: options.validDrawingColor,
-        borderStrokeWidth: 2, // TODO: Make this configurable via options
+        borderStrokeWidth: options.defaultBorderStrokeWidth, // Use option
         isFilled: true,
       );
-      // One final validation of the entire assembled shape if the callback supports it.
-      // This is somewhat redundant if individual parts were validated, but can be a safeguard.
-      // For now, assume individual ring validation is sufficient.
       onShapeFinalized(PolygonShapeData(polygon: newPolygon));
 
     } else if (toolWas == DrawingTool.polyline) {
@@ -482,7 +478,7 @@ class NewShapeGestureManager {
         final newPolyline = Polyline(
           points: partPoints,
           color: options.validDrawingColor,
-          strokeWidth: 3, // TODO: Make this configurable via options
+          strokeWidth: options.defaultStrokeWidth, // Use option
         );
         newPolylines.add(PolylineShapeData(polyline: newPolyline));
       }
@@ -541,13 +537,19 @@ extension _CircleShapeDataCopyWith on CircleShapeData {
         point: circleMarker.point,
         radius: circleMarker.radius,
         useRadiusInMeter: circleMarker.useRadiusInMeter,
-        color: fillColor, // New fill color
-        borderColor: borderColor, // New border color
-        borderStrokeWidth: circleMarker.borderStrokeWidth,
+        color: fillColor, 
+        borderColor: borderColor, 
+        borderStrokeWidth: circleMarker.borderStrokeWidth, // Keep existing, or add param if needs change
         extraData: circleMarker.extraData,
       ),
       id: id, 
-      label: label,
+      // label: label, // Label not present in CircleShapeData, remove if it was a mistake
+    );
+  }
+   CircleShapeData copyWithBorderWidth(double borderWidth) {
+    return CircleShapeData(
+      circleMarker: circleMarker.copyWith(borderStrokeWidth: borderWidth),
+      id: id,
     );
   }
 }
@@ -556,12 +558,18 @@ extension _CircleShapeDataCopyWith on CircleShapeData {
 extension _PolygonShapeDataCopyWith on PolygonShapeData {
   PolygonShapeData copyWithColor(Color fillColor, Color borderColor) {
     return PolygonShapeData(
-      polygon: polygon.copyWith( // Assuming Polygon has a copyWith method
+      polygon: polygon.copyWith( 
         color: fillColor,
         borderColor: borderColor,
       ),
       id: id, 
-      label: label,
+      // label: label, // Label not present in PolygonShapeData, remove if it was a mistake
+    );
+  }
+  PolygonShapeData copyWithBorderWidth(double borderWidth) {
+    return PolygonShapeData(
+      polygon: polygon.copyWith(borderStrokeWidth: borderWidth),
+      id: id,
     );
   }
 }

@@ -18,8 +18,8 @@ class PolyEditorManager {
 
   // Internal state to track if PolyEditor should be active
   bool _isActive = false;
-  bool _isCurrentPolyEditorContentInvalid = false; // NEW: Tracks if the current PolyEditor content is invalid
-  
+  bool _isCurrentPolyEditorContentInvalid = false;
+
   /// Getter to expose the invalid status, e.g., for UI elements to disable a "finalize" button.
   bool get isCurrentContentInvalid => _isCurrentPolyEditorContentInvalid;
 
@@ -29,40 +29,31 @@ class PolyEditorManager {
     required VoidCallback onRefresh,
   })  : _drawingState = drawingState,
         _options = options,
-        _onRefresh = onRefresh {
-    // Listener is added in initPolyEditor to ensure _polyEditor exists
-  }
+        _onRefresh = onRefresh;
 
   /// Initializes the PolyEditor instance.
-  /// This should be called once, typically in initState of the consuming widget (DrawingLayerCoordinator).
   void initPolyEditor() {
     _polyEditor = PolyEditor(
-      points: [], // Start with empty points
-      pointIcon: _options.vertexHandleIcon ?? _defaultVertexIcon(),
-      intermediateIcon: _options.intermediateVertexHandleIcon ?? _defaultIntermediateVertexIcon(),
-      addClosePathMarker: false, // Initial value, will be updated by reinitialize
-      callbackRefresh: _onRefresh, // Crucial for PolyEditor to signal updates
+      points: [],
+      pointIcon: _options.getVertexIcon(), // Initial default from options
+      intermediateIcon: _options.getIntermediateIcon(), // Initial default from options
+      addClosePathMarker: false,
+      callbackRefresh: _onRefresh,
       polygonEditorOptions: PolygonEditorOptions(
         lineColor: _options.temporaryLineColor, // Default line color
         lineStrokeWidth: 3.0, // Default stroke width
-        // Other PolygonEditorOptions can be exposed via DrawingToolsOptions if needed
       ),
     );
-    // Add listener to DrawingState AFTER _polyEditor is initialized
     _drawingState.addListener(reinitializePolyEditorState);
-    // Perform initial setup based on the current drawing state
     reinitializePolyEditorState();
   }
 
   /// Reconfigures the PolyEditor based on the current DrawingState.
-  /// This is the core method that adapts PolyEditor to different drawing/editing contexts.
   void reinitializePolyEditorState() {
     if (_polyEditor == null) {
-      // This case should ideally not be hit if initPolyEditor is called correctly.
-      // However, as a safeguard:
       debugPrint("PolyEditorManager: PolyEditor not initialized. Calling initPolyEditor().");
       initPolyEditor();
-      if (_polyEditor == null) { // If initPolyEditor somehow failed (should not happen)
+      if (_polyEditor == null) {
          debugPrint("PolyEditorManager: PolyEditor initialization failed critically.");
          return;
       }
@@ -72,120 +63,95 @@ class PolyEditorManager {
     bool newAddClosePathMarker = false;
     bool shouldBeActive = false;
     Color currentPolyEditorLineColor = _options.temporaryLineColor; // Default
+    Widget currentPointIcon = _options.getVertexIcon(); // Default, will be overridden
+    Widget currentIntermediateIcon = _options.getIntermediateIcon(); // Default, will be overridden
 
     if (_drawingState.isMultiPartDrawingInProgress && _drawingState.currentDrawingParts.isNotEmpty) {
-      // Context: Drawing a new segment of a multi-part polygon/polyline
-      newPoints = List.from(_drawingState.currentDrawingParts.last); // Current active part
+      newPoints = List.from(_drawingState.currentDrawingParts.last); 
       if (_drawingState.activeMultiPartTool == DrawingTool.polygon) {
-        newAddClosePathMarker = newPoints.length > 1; // Show close marker if at least 2 points
+        newAddClosePathMarker = newPoints.length > 1;
       }
-      // TODO: Set currentPolyEditorLineColor based on validity if possible (e.g., _currentPlacementIsValid from original DrawingLayer)
-      // This requires more state or access to it. For now, uses temporaryLineColor.
       shouldBeActive = true;
     
-    // Validate the current segment if drawing a new multi-part shape
-    if (newPoints.isNotEmpty) { // Only validate if there are points
-      // Create a temporary shape for validation
-      ShapeData tempShapeForValidation;
-      if (_drawingState.activeMultiPartTool == DrawingTool.polygon) {
-        // For polygons, validation might be against the current set of points forming an open ring
-        tempShapeForValidation = PolygonShapeData(
-            polygon: Polygon(points: newPoints, isFilled: false, color: Colors.transparent, borderColor: Colors.transparent), // Style doesn't matter for validation
-            id: "temp_validation_poly"
-        );
-      } else { // Polyline
-        tempShapeForValidation = PolylineShapeData(
-            polyline: Polyline(points: newPoints, color: Colors.transparent), // Style doesn't matter
-            id: "temp_validation_line"
-        );
-      }
-      
-      bool isValid = _options.validateShapePlacement?.call(tempShapeForValidation.points) ?? true;
-      if (!isValid) {
-        if (!_isCurrentPolyEditorContentInvalid) { // Call callback only when state changes to invalid
-             _options.onPlacementInvalid?.call("Current drawing segment is not allowed here.");
+      // Validation for active segment
+      if (newPoints.isNotEmpty) {
+        ShapeData tempShapeForValidation;
+        if (_drawingState.activeMultiPartTool == DrawingTool.polygon) {
+          tempShapeForValidation = PolygonShapeData(
+              polygon: Polygon(points: newPoints, isFilled: false, color: Colors.transparent, borderColor: Colors.transparent),
+              id: "temp_validation_poly");
+        } else { // Polyline
+          tempShapeForValidation = PolylineShapeData(
+              polyline: Polyline(points: newPoints, color: Colors.transparent),
+              id: "temp_validation_line");
         }
-        _isCurrentPolyEditorContentInvalid = true;
+        
+        bool isValid = _options.validateShapePlacement?.call(tempShapeForValidation.points) ?? true;
+        if (!isValid) {
+          if (!_isCurrentPolyEditorContentInvalid) { 
+               _options.onPlacementInvalid?.call("Current drawing segment is not allowed here.");
+          }
+          _isCurrentPolyEditorContentInvalid = true;
+        } else {
+          _isCurrentPolyEditorContentInvalid = false;
+        }
+        currentPolyEditorLineColor = _isCurrentPolyEditorContentInvalid ? _options.invalidDrawingColor : (_options.activeSegmentColor ?? _options.temporaryLineColor);
       } else {
-        _isCurrentPolyEditorContentInvalid = false;
+        _isCurrentPolyEditorContentInvalid = false; 
+        currentPolyEditorLineColor = _options.activeSegmentColor ?? _options.temporaryLineColor;
       }
-      currentPolyEditorLineColor = _isCurrentPolyEditorContentInvalid ? _options.invalidDrawingColor : _options.temporaryLineColor;
-    } else {
-      // No points yet, so it's not invalid by placement, reset flag
-      _isCurrentPolyEditorContentInvalid = false; 
-    }
+      currentPointIcon = _options.getActiveSegmentVertexIcon();
+      currentIntermediateIcon = _options.getActiveSegmentIntermediateIcon();
 
     } else if (_drawingState.activeEditMode == EditMode.vertexEditing && _drawingState.selectedShapeId != null) {
-      // Context: Vertex-editing an existing, finalized shape
-    // Validation for vertex editing typically happens on confirm, or could be live here too if desired
-    _isCurrentPolyEditorContentInvalid = false; // Reset for vertex editing mode, assume valid until moved
+      _isCurrentPolyEditorContentInvalid = false; 
       final selectedShape = _drawingState.findShapeById(_drawingState.selectedShapeId!);
-      if (selectedShape is PolyShapeData) { // Covers PolygonShapeData and PolylineShapeData
+      if (selectedShape is PolyShapeData) {
         newPoints = List.from(selectedShape.points);
         if (selectedShape is PolygonShapeData) {
-          // PolyEditor expects an open path to use its addClosePathMarker correctly.
-          // If the polygon's points list is closed (first == last), remove the last point for PolyEditor.
           if (newPoints.length > 1 &&
               newPoints.first.latitude == newPoints.last.latitude &&
               newPoints.first.longitude == newPoints.last.longitude) {
             newPoints.removeLast();
           }
-          newAddClosePathMarker = true; // Always true for polygons being edited
+          newAddClosePathMarker = true;
         } else { // Polyline
           newAddClosePathMarker = false;
         }
-        currentPolyEditorLineColor = _options.editingHandleColor.withOpacity(0.8);
+        currentPolyEditorLineColor = _options.editingHandleColor.withOpacity(0.8); // Style for editing existing shape
+        currentPointIcon = _options.getVertexIcon(); // Standard editing icons
+        currentIntermediateIcon = _options.getIntermediateIcon(); // Standard editing icons
         shouldBeActive = true;
       }
     }
 
-    // Check if points actually changed to avoid unnecessary updates if possible
-    // This is a shallow check; PolyEditor might do more internally.
     bool pointsChanged = !_listLatLngEquals(_polyEditor!.points, newPoints);
-    
     if (pointsChanged) {
-        _polyEditor!.points.clear();
-        _polyEditor!.points.addAll(newPoints);
+      _polyEditor!.points.clear();
+      _polyEditor!.points.addAll(newPoints);
     }
 
-    if (_polyEditor!.addClosePathMarker != newAddClosePathMarker) {
-        _polyEditor!.addClosePathMarker = newAddClosePathMarker;
-        // Forcing a refresh might be needed if PolyEditor doesn't auto-refresh on this property change.
-        // pointsChanged = true; // Consider this a change that needs refresh
-    }
+    _polyEditor!.addClosePathMarker = newAddClosePathMarker;
+    _polyEditor!.pointIcon = currentPointIcon; // Apply determined icon
+    _polyEditor!.intermediateIcon = currentIntermediateIcon; // Apply determined icon
     
-    // Update styles from options (in case they are dynamic, though less common for icons)
-    _polyEditor!.pointIcon = _options.vertexHandleIcon ?? _defaultVertexIcon();
-    _polyEditor!.intermediateIcon = _options.intermediateVertexHandleIcon ?? _defaultIntermediateVertexIcon();
     if (_polyEditor!.polygonEditorOptions.lineColor != currentPolyEditorLineColor) {
         _polyEditor!.polygonEditorOptions = PolygonEditorOptions(
             lineColor: currentPolyEditorLineColor,
-            lineStrokeWidth: _polyEditor!.polygonEditorOptions.lineStrokeWidth, // Keep other options
+            lineStrokeWidth: _polyEditor!.polygonEditorOptions.lineStrokeWidth,
         );
-        // pointsChanged = true; // Consider this a change that needs refresh
     }
 
     _isActive = shouldBeActive;
 
     if (!_isActive && _polyEditor!.points.isNotEmpty) {
-      // If not active but PolyEditor still has points, clear them.
       _polyEditor!.points.clear();
-      pointsChanged = true; // This is a significant change
+      // pointsChanged = true; // Already handled by test() if points were cleared
     }
 
-    if (pointsChanged) {
-      // PolyEditor's callbackRefresh should be triggered by its internal methods when points list is manipulated
-      // or when test() is called. If direct manipulation (like .clear() or .addAll()) doesn't trigger it,
-      // explicitly call test() or _onRefresh().
-      // Calling _polyEditor.test() is the recommended way to make PolyEditor refresh itself.
-      _polyEditor!.test(); 
-    }
-    
-    // If only properties like addClosePathMarker or styling changed without points changing,
-    // and PolyEditor doesn't auto-refresh, call _onRefresh or test()
-    // For now, assume PolyEditor's test() handles most visual updates.
-    // If visual glitches occur for non-point changes, add:
-    // else if (/* any other property changed */) { _polyEditor.test(); }
+    // PolyEditor's test() method should be called to reflect changes in points or styling.
+    // This typically triggers its internal refresh and the callbackRefresh.
+    _polyEditor!.test(); 
   }
 
   /// Helper to compare lists of LatLng.
@@ -204,7 +170,11 @@ class PolyEditorManager {
     if (_polyEditor == null || !_isActive) {
       return [];
     }
-    return _polyEditor!.edit(); // These are the draggable vertex and intermediate handles
+    // Note: The responsibility of updating DrawingState.currentDrawingParts.last
+    // with _polyEditor.points upon user interaction within PolyEditor
+    // should be handled by the widget that owns PolyEditorManager (e.g., DrawingLayerCoordinator)
+    // after _onRefresh is triggered by PolyEditor.
+    return _polyEditor!.edit(); 
   }
 
   /// Provides the Polyline to be rendered by PolyEditor (the lines connecting vertices).
@@ -213,39 +183,97 @@ class PolyEditorManager {
       return null;
     }
 
-    // Determine color based on context
-    Color lineColor;
-    if (_drawingState.activeEditMode == EditMode.vertexEditing) {
-      // TODO: Implement validation for vertex editing if needed. For now, assume valid.
-      // If a vertex drag makes the shape invalid, this color should change.
-      // This would require PolyEditor to provide feedback on point changes during drag.
-      lineColor = _options.editingHandleColor.withOpacity(0.8);
-    } else if (_drawingState.isMultiPartDrawingInProgress) {
-      lineColor = _isCurrentPolyEditorContentInvalid ? _options.invalidDrawingColor : _options.temporaryLineColor;
-    } else {
-      // Fallback or inactive state, though this method shouldn't be called if not active.
-      lineColor = _options.temporaryLineColor;
-    }
-    
+    // The color is already set by reinitializePolyEditorState via polygonEditorOptions
+    Color lineColor = _polyEditor!.polygonEditorOptions.lineColor; 
+
     return Polyline(
       points: List.from(_polyEditor!.points), 
       color: lineColor,
       strokeWidth: _polyEditor!.polygonEditorOptions.lineStrokeWidth,
-      isDotted: true, 
+      // Example: Dotted line for active multi-part segment, solid for vertex editing
+      isDotted: _drawingState.isMultiPartDrawingInProgress, 
     );
   }
+  
+  /// Finalizes the current multi-part drawing session and returns the consolidated shape.
+  ///
+  /// - `activeTool`: The [DrawingTool] (polygon or polyline) that was active for this multi-part session.
+  /// This is needed because `DrawingState.activeMultiPartTool` will be cleared by `consumeDrawingParts`.
+  ///
+  /// Returns a [ShapeData] (either [MultiPolylineShapeData] or [MultiPolygonShapeData])
+  /// if valid parts were drawn, otherwise `null`.
+  ShapeData? finalizeMultiPartShape(DrawingTool activeTool) {
+    // Get all parts including the one currently in PolyEditor, then consume from DrawingState
+    List<List<LatLng>> allRawParts = List.from(_drawingState.currentDrawingParts);
 
-  Widget _defaultVertexIcon() {
-    return Icon(Icons.circle, color: _options.editingHandleColor, size: _options.vertexHandleRadius * 2);
+    // If PolyEditor has points and it's different from the last part in drawingState, add it.
+    // This handles the case where the last segment is actively being edited in PolyEditor.
+    if (_polyEditor != null && _polyEditor!.points.isNotEmpty) {
+      if (allRawParts.isNotEmpty && _listLatLngEquals(allRawParts.last, _polyEditor!.points)) {
+        // Points are already the last element, ensure it's a copy
+        allRawParts.last = List.from(_polyEditor!.points);
+      } else if (allRawParts.isEmpty || !_listLatLngEquals(allRawParts.last, _polyEditor!.points)) {
+        // Add PolyEditor points if they are different or if allRawParts is empty
+        allRawParts.add(List.from(_polyEditor!.points));
+      }
+    }
+    
+    // Now, clear the drawing state parts.
+    _drawingState.consumeDrawingParts(); // This clears _currentDrawingParts and _activeMultiPartTool in DrawingState
+
+    final List<List<LatLng>> validParts = allRawParts.where((part) {
+      bool isValidPolyline = (activeTool == DrawingTool.polyline || activeTool == DrawingTool.multiPolyline) && part.length >= 2;
+      bool isValidPolygon = (activeTool == DrawingTool.polygon || activeTool == DrawingTool.multiPolygon) && part.length >= 3;
+      return isValidPolyline || isValidPolygon;
+    }).toList();
+
+    if (validParts.isEmpty) {
+      _polyEditor?.points.clear();
+      _polyEditor?.test();
+      return null;
+    }
+
+    ShapeData? newShape;
+    if (activeTool == DrawingTool.polyline || activeTool == DrawingTool.multiPolyline) {
+      List<Polyline> polylines = validParts.map((points) => Polyline(
+        points: points,
+        color: _options.validDrawingColor, // TODO: Use a specific multi-polyline style from options
+        strokeWidth: 3.0, // TODO: Take from options
+        // Use polyline specific options from DrawingToolsOptions if available
+      )).toList();
+      if (polylines.isNotEmpty) {
+        newShape = MultiPolylineShapeData(id: const Uuid().v4(), polylines: polylines);
+      }
+    } else if (activeTool == DrawingTool.polygon || activeTool == DrawingTool.multiPolygon) {
+      List<Polygon> polygons = validParts.map((points) {
+        List<LatLng> closedPoints = List.from(points);
+        if (closedPoints.isNotEmpty && (closedPoints.first.latitude != closedPoints.last.latitude || closedPoints.first.longitude != closedPoints.last.longitude)) {
+          closedPoints.add(closedPoints.first);
+        }
+        return Polygon(
+          points: closedPoints,
+          color: _options.completedPartFillColor ?? _options.drawingFillColor.withOpacity(0.5), // TODO: Specific style
+          borderColor: _options.completedPartColor ?? _options.validDrawingColor,
+          borderStrokeWidth: 3.0, // TODO: Take from options
+          isFilled: true,
+          // Use polygon specific options from DrawingToolsOptions if available
+        );
+      }).toList();
+      if (polygons.isNotEmpty) {
+        newShape = MultiPolygonShapeData(id: const Uuid().v4(), polygons: polygons);
+      }
+    }
+
+    _polyEditor?.points.clear(); 
+    _polyEditor?.test(); 
+
+    return newShape;
   }
 
-  Widget _defaultIntermediateVertexIcon() {
-    return Icon(Icons.add_circle_outline, color: _options.editingHandleColor.withOpacity(0.7), size: _options.intermediateVertexHandleRadius * 2);
-  }
+  // Removed _defaultVertexIcon and _defaultIntermediateVertexIcon as
+  // _options.getVertexIcon() and _options.getIntermediateIcon() should be used directly.
 
   void dispose() {
     _drawingState.removeListener(reinitializePolyEditorState);
-    // PolyEditor itself from flutter_map_line_editor does not have a specific dispose method.
-    // If it did, or if other resources were managed here, they would be cleaned up.
   }
 }
