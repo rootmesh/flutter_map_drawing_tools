@@ -16,6 +16,15 @@ import 'drawing_state.dart' show ShapeData;
 /// {@endtemplate}
 typedef ValidateShapePlacementCallback = bool Function(List<LatLng> points);
 
+/// {@template on_placement_invalid_callback}
+/// A callback triggered when a shape placement or drawing action is deemed invalid
+/// by the [ValidateShapePlacementCallback].
+///
+/// Provides a [message] explaining the reason for invalid placement, which can
+/// be displayed to the user.
+/// {@endtemplate}
+typedef OnPlacementInvalidCallback = void Function(String message);
+
 /// {@template point_icon_builder}
 /// A callback function that builds a widget for representing a point marker.
 ///
@@ -59,12 +68,19 @@ class DrawingToolsOptions {
     this.pointIconBuilder,
     this.intermediateIconBuilder,
     this.vertexIconBuilder,
+    this.onPlacementInvalid, 
   }) : drawingFillColor = drawingFillColor ?? validDrawingColor.withOpacity(0.3);
 
   /// {@macro validate_shape_placement_callback}
   ///
   /// If `null`, all placements are considered valid by default.
   final ValidateShapePlacementCallback? validateShapePlacement;
+
+  /// {@macro on_placement_invalid_callback}
+  ///
+  /// If `null`, no specific action is taken when placement is invalid, beyond
+  /// visual indication and preventing finalization.
+  final OnPlacementInvalidCallback? onPlacementInvalid;
   
   // Colors
   /// Base color for validly drawn shapes and temporary visuals indicating valid placement.
